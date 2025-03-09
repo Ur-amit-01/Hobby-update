@@ -1,73 +1,73 @@
 import os
-import fitz  # PyMuPDF
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from PyPDF2 import PdfReader, PdfWriter
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas
+from io import BytesIO
 
-# Function to arrange PDF pages (N-up)
-def arrange_pdf_pages(input_pdf, output_pdf, pages_per_sheet=4):
-    doc = fitz.open(input_pdf)
-    output_doc = fitz.open()
+# Function to create N-up PDF
+def create_n_up_pdf(input_pdf_path, output_pdf_path, n_up=2, gap=0.5):
+    # Read the input PDF
+    reader = PdfReader(input_pdf_path)
+    num_pages = len(reader.pages)
 
-    # A4 paper size in points (landscape)
-    A4_WIDTH, A4_HEIGHT = 842, 595  # Points (1 point = 1/72 inch)
+    # Create a new PDF with A4 landscape orientation
+    packet = BytesIO()
+    can = canvas.Canvas(packet, pagesize=landscape(A4))
+    width, height = landscape(A4)
 
-    # Convert 0.5 mm to points (~1.42 points)
-    gap = 1.42  
+    # Calculate the size of each page
+    page_width = (width - (n_up + 1) * gap * mm) / n_up
+    page_height = (height - (n_up + 1) * gap * mm) / n_up
 
-    # 2×2 layout for 4 pages per sheet
-    cols, rows = (2, 2)
+    for i in range(num_pages):
+        if i % n_up == 0 and i != 0:
+            can.showPage()  # Create a new page after every n_up pages
 
-    # Page size (excluding gaps)
-    page_width = (A4_WIDTH - (cols - 1) * gap) / cols
-    page_height = (A4_HEIGHT - (rows - 1) * gap) / rows
+        x = (i % n_up) * (page_width + gap * mm) + gap * mm
+        y = height - page_height - gap * mm
 
-    for i in range(0, len(doc), pages_per_sheet):
-        new_page = output_doc.new_page(width=A4_WIDTH, height=A4_HEIGHT)
+        # Draw the page
+        can.drawImage(input_pdf_path, x, y, width=page_width, height=page_height, preserveAspectRatio=True, mask='auto')
 
-        for j in range(pages_per_sheet):
-            if i + j >= len(doc):
-                break  # Stop if no more pages
+    can.save()
 
-            page = doc[i + j]
+    # Move to the beginning of the BytesIO buffer
+    packet.seek(0)
 
-            # Calculate position with gaps
-            x_offset = (j % cols) * (page_width + gap)
-            y_offset = (j // cols) * (page_height + gap)
+    # Read the new PDF
+    new_pdf = PdfReader(packet)
+    writer = PdfWriter()
 
-            # Define the area where the page will be placed
-            new_rect = fitz.Rect(x_offset, y_offset, x_offset + page_width, y_offset + page_height)
+    for page in new_pdf.pages:
+        writer.add_page(page)
 
-            # Insert and fit the page into the defined area
-            new_page.show_pdf_page(new_rect, doc, i + j)
+    # Write the output PDF
+    with open(output_pdf_path, "wb") as output_pdf:
+        writer.write(output_pdf)
 
-    output_doc.save(output_pdf)
+# Handler for /N-up command
+@Client.on_message(filters.command("N-up") & filters.document)
+async def handle_n_up(client: Client, message: Message):
+    # Check if the document is a PDF
+    if message.document.mime_type == "application/pdf":
+        # Download the PDF file
+        input_pdf_path = "input.pdf"
+        output_pdf_path = "output_n_up.pdf"
 
-# Command to handle /N-up when replying to a PDF
-@Client.on_message(filters.command("N-up") & filters.reply)
-async def n_up_handler(client: Client, message: Message):
-    replied_msg = message.reply_to_message
+        await message.download(file_name=input_pdf_path)
 
-    if not replied_msg or not replied_msg.document or not replied_msg.document.file_name.endswith(".pdf"):
-        await message.reply("❌ Please reply to a PDF file.")
-        return
+        # Create N-up PDF
+        create_n_up_pdf(input_pdf_path, output_pdf_path)
 
-    # Download the PDF
-    pdf_path = f"{replied_msg.document.file_id}.pdf"
-    await client.download_media(replied_msg, file_name=pdf_path)
+        # Send the processed PDF back to the user
+        await message.reply_document(document=output_pdf_path)
 
-    output_pdf = f"N-up_{replied_msg.document.file_name}"
-
-    try:
-        # Process PDF
-        arrange_pdf_pages(pdf_path, output_pdf)
-
-        # Send the processed PDF
-        await message.reply_document(output_pdf, caption="✅ Here is your arranged PDF.")
-
-    except Exception as e:
-        await message.reply(f"❌ Error: {e}")
-
-    finally:
         # Clean up files
-        os.remove(pdf_path) if os.path.exists(pdf_path) else None
-        os.remove(output_pdf) if os.path.exists(output_pdf) else None
+        os.remove(input_pdf_path)
+        os.remove(output_pdf_path)
+    else:
+        await message.reply("Please send a PDF file.")
+
