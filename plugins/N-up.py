@@ -51,23 +51,26 @@ def create_n_up_pdf(input_pdf_path, output_pdf_path, n_up=2, gap=0.5):
 # Handler for /N-up command
 @Client.on_message(filters.command("N_up") & filters.document)
 async def handle_n_up(client: Client, message: Message):
-    # Check if the document is a PDF
-    if message.document.mime_type == "application/pdf":
-        # Download the PDF file
-        input_pdf_path = "input.pdf"
-        output_pdf_path = "output_n_up.pdf"
+    try:
+        # Check if the document is a PDF
+        if message.document.mime_type == "application/pdf":
+            # Download the PDF file
+            input_pdf_path = "input.pdf"
+            output_pdf_path = "output_n_up.pdf"
 
-        await message.download(file_name=input_pdf_path)
+            await message.download(file_name=input_pdf_path)
 
-        # Create N-up PDF
-        create_n_up_pdf(input_pdf_path, output_pdf_path)
+            # Create N-up PDF
+            create_n_up_pdf(input_pdf_path, output_pdf_path)
 
-        # Send the processed PDF back to the user
-        await message.reply_document(document=output_pdf_path)
+            # Send the processed PDF back to the user
+            await message.reply_document(document=output_pdf_path)
 
-        # Clean up files
-        os.remove(input_pdf_path)
-        os.remove(output_pdf_path)
-    else:
-        await message.reply("Please send a PDF file.")
+            # Clean up files
+            os.remove(input_pdf_path)
+            os.remove(output_pdf_path)
+        else:
+            await message.reply("Please send a PDF file.")
+    except Exception as e:
+        await message.reply(f"An error occurred: {str(e)}")
 
