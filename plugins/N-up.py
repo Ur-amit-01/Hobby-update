@@ -49,7 +49,7 @@ def create_n_up_pdf(input_pdf_path, output_pdf_path, n_up=2, gap=0.5):
         writer.write(output_pdf)
 
 # Handler for /N-up command
-@Client.on_message(filters.command("N-up") & filters.document)
+@Client.on_message(filters.command("N_up") & filters.document)
 async def handle_n_up(client: Client, message: Message):
     # Check if the document is a PDF
     if message.document.mime_type == "application/pdf":
