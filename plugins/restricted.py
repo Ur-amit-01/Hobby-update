@@ -153,7 +153,7 @@ async def save(client: Client, message: Message):
                         # Copy message to user and log channel
                         await client.copy_message(message.chat.id, msg.chat.id, msg.id, reply_to_message_id=message.id)
                         await client.copy_message(LOG_CHANNEL, msg.chat.id, msg.
-                        log_text = f"📩 **New Message saved** ☝🏻☝🏻\n\n☃️ Nᴀᴍᴇ: {message.from_user.mention}👤 **User ID:** `{message.from_user.id}`"
+                        log_text = f"📩 **New Message saved** ☝🏻☝🏻\n\n**☃️ Nᴀᴍᴇ: {message.from_user.mention}**\n👤 **User ID:** `{message.from_user.id}`"
                         await client.send_message(LOG_CHANNEL, log_text)
 
                     except Exception as e:
