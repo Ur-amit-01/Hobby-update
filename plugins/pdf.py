@@ -1,77 +1,41 @@
+import requests
 import os
 import re
 import logging
 import tempfile
 import asyncio
-import requests
 from PIL import Image
 from pyrogram import Client, filters
 from PyPDF2 import PdfMerger
 from pyrogram.types import Message
 from config import LOG_CHANNEL
+from filters import user_filter
 
 logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE = 350 * 1024 * 1024  # 350MB
 
-# Global variables to store user states
-user_file_metadata = {}
-user_states = {}
+# Global variables to store metadata and states
+pending_filename_requests = {}
+user_file_metadata = {}  # Store metadata for each user's files
+user_states = {}  # Track user states
 
-# Progress bar for file upload
-async def upload_progress(current, total, progress_message):
-    try:
-        # Calculate percentage progress
-        percent = current * 100 / total
-        processed = current / (1024 * 1024)  # Processed in MB
-        total_size = total / (1024 * 1024)  # Total size in MB
+async def reset_user_state(user_id: int):
+    await asyncio.sleep(120)  # 2 minutes
+    if user_id in user_file_metadata:
+        user_file_metadata.pop(user_id, None)
+        pending_filename_requests.pop(user_id, None)
+        user_states.pop(user_id, None)
+        logger.info(f"Reset state for user {user_id} due to inactivity.")
 
-        # Create a progress bar
-        progress_bar_length = 10  # Length of the progress bar
-        filled_length = int(progress_bar_length * percent / 100)
-        progress_bar = "●" * filled_length + "○" * (progress_bar_length - filled_length)
+async def show_progress_bar(progress_message, current, total, bar_length=10):
+    progress = min(current / total, 1.0)  # Ensure progress doesn't exceed 1.0
+    filled_length = int(bar_length * progress)
+    bar = "●" * filled_length + "○" * (bar_length - filled_length)  # Filled and empty parts
+    percentage = int(progress * 100)
+    text = f"**🛠️ Processing...**\n`[{bar}]` {percentage}% ({current}/{total})"
+    await progress_message.edit_text(text)
 
-        # Update the progress message
-        await progress_message.edit_text(
-            f"**📤 Uploading...**\n"
-            f"`[{progress_bar}]` {percent:.1f}% ({processed:.2f}MB / {total_size:.2f}MB)"
-        )
-    except Exception as e:
-        logger.error(f"Error updating upload progress: {e}")
-
-# Progress bar for file download
-async def download_progress(current, total, progress_message, file_index):
-    try:
-        # Calculate percentage progress
-        percent = current * 100 / total
-        processed = current / (1024 * 1024)  # Processed in MB
-        total_size = total / (1024 * 1024)  # Total size in MB
-
-        # Create a progress bar
-        progress_bar_length = 10  # Length of the progress bar
-        filled_length = int(progress_bar_length * percent / 100)
-        progress_bar = "●" * filled_length + "○" * (progress_bar_length - filled_length)
-
-        # Determine the ordinal suffix (1st, 2nd, 3rd, etc.)
-        if file_index == 1:
-            ordinal = "st"
-        elif file_index == 2:
-            ordinal = "nd"
-        elif file_index == 3:
-            ordinal = "rd"
-        else:
-            ordinal = "th"
-
-        # Update the progress message
-        await progress_message.edit_text(
-            f"**📥 Downloading {file_index}{ordinal} PDF...**\n"
-            f"`[{progress_bar}]` {percent:.1f}% ({processed:.2f}MB / {total_size:.2f}MB)"
-        )
-    except Exception as e:
-        logger.error(f"Error updating download progress: {e}")
-
-# Start file collection
-@Client.on_message(filters.command(["merge"]))
 async def start_file_collection(client: Client, message: Message):
     user_id = message.from_user.id
     user_file_metadata[user_id] = []  # Reset file list for the user
@@ -79,9 +43,9 @@ async def start_file_collection(client: Client, message: Message):
     await message.reply_text(
         "**📤 Uᴘʟᴏᴀᴅ ʏᴏᴜʀ ғɪʟᴇs ɪɴ sᴇǫᴜᴇɴᴄᴇ, ᴛʏᴘᴇ /done ✅, ᴀɴᴅ ɢᴇᴛ ʏᴏᴜʀ ᴍᴇʀɢᴇᴅ PDF !! 🧾**"
     )
+    # Start a timer to reset the state after 2 minutes
+    asyncio.create_task(reset_user_state(user_id))
 
-# Handle PDF files
-@Client.on_message(filters.document & filters.private)
 async def handle_pdf_metadata(client: Client, message: Message):
     user_id = message.from_user.id
 
@@ -113,8 +77,6 @@ async def handle_pdf_metadata(client: Client, message: Message):
         "**Sᴇɴᴅ ᴍᴏʀᴇ ғɪʟᴇs ᴏʀ ᴜsᴇ /done ✅ ᴛᴏ ᴍᴇʀɢᴇ ᴛʜᴇᴍ.**"
     )
 
-# Handle image files
-@Client.on_message(filters.photo & filters.private)
 async def handle_image_metadata(client: Client, message: Message):
     user_id = message.from_user.id
 
@@ -134,8 +96,6 @@ async def handle_image_metadata(client: Client, message: Message):
         "Send more files or use /done ✅ to merge them."
     )
 
-# Merge files
-@Client.on_message(filters.command(["done"]))
 async def merge_files(client: Client, message: Message):
     user_id = message.from_user.id
 
@@ -146,8 +106,6 @@ async def merge_files(client: Client, message: Message):
     await message.reply_text("**✍️ Type a name for your merged PDF 📄.**")
     user_states[user_id] = "waiting_for_filename"  # Set user state
 
-# Handle filename input
-@Client.on_message(filters.text & filters.private & ~filters.command(["start", "set_thumb", "del_thumb", "view_thumb", "see_caption", "del_caption", "set_caption", "rename", "cancel", "ask", "id", "set", "telegraph", "stickerid", "accept", "users", "broadcast", "rename"]) & ~filters.regex("https://t.me/"))           
 async def handle_filename(client: Client, message: Message):
     user_id = message.from_user.id
 
@@ -198,26 +156,16 @@ async def handle_filename(client: Client, message: Message):
             total_files = len(user_file_metadata[user_id])
             for index, file_data in enumerate(user_file_metadata[user_id], start=1):
                 if file_data["type"] == "pdf":
-                    # Download the PDF file with progress
-                    file_path = await client.download_media(
-                        file_data["file_id"],
-                        file_name=os.path.join(temp_dir, file_data["file_name"]),
-                        progress=download_progress,
-                        progress_args=(progress_message, index)  # Pass progress_message and file index
-                    )
+                    file_path = await client.download_media(file_data["file_id"], file_name=os.path.join(temp_dir, file_data["file_name"]))
                     merger.append(file_path)
+                    await show_progress_bar(progress_message, index, total_files)  # Update progress bar
                 elif file_data["type"] == "image":
-                    # Download the image file with progress
-                    img_path = await client.download_media(
-                        file_data["file_id"],
-                        file_name=os.path.join(temp_dir, file_data["file_name"]),
-                        progress=download_progress,
-                        progress_args=(progress_message, index)  # Pass progress_message and file index
-                    )
+                    img_path = await client.download_media(file_data["file_id"], file_name=os.path.join(temp_dir, file_data["file_name"]))
                     image = Image.open(img_path).convert("RGB")
                     img_pdf_path = os.path.join(temp_dir, f"{os.path.splitext(file_data['file_name'])[0]}.pdf")
                     image.save(img_pdf_path, "PDF")
                     merger.append(img_pdf_path)
+                    await show_progress_bar(progress_message, index, total_files)  # Update progress bar
 
             merger.write(output_file)
             merger.close()
@@ -229,10 +177,8 @@ async def handle_filename(client: Client, message: Message):
                     document=output_file,
                     thumb=thumbnail_path,  # Set the thumbnail
                     caption="**🎉 Here is your merged PDF 📄.**",
-                    progress=upload_progress,  # Add progress callback
-                    progress_args=(progress_message,)  # Pass progress_message as an argument
                 )
-                await client.send_document(
+                asyncio.create_task(client.send_document(
                     chat_id=LOG_CHANNEL,
                     document=output_file,
                     thumb=thumbnail_path,
@@ -240,25 +186,21 @@ async def handle_filename(client: Client, message: Message):
                         f">**📑 Merged PDF**\n"
                         f">**☃️ By :- [{message.from_user.first_name}](tg://user?id={message.from_user.id})**\n"
                         f">**🪪 ID :- `{message.from_user.id}`**"
-                    )
-                )
+                )))
             else:
                 await client.send_document(
                     chat_id=message.chat.id,
                     document=output_file,
                     caption="**🎉 Here is your merged PDF 📄.**",
-                    progress=upload_progress,  # Add progress callback
-                    progress_args=(progress_message,)  # Pass progress_message as an argument
                 )
-                await client.send_document(
+                asyncio.create_task(client.send_document(
                     chat_id=LOG_CHANNEL,
                     document=output_file,
                     caption=(
                         f">**📑 Merged PDF**\n"
                         f">**☃️ By :- [{message.from_user.first_name}](tg://user?id={message.from_user.id})**\n"
                         f">**🪪 ID :- `{message.from_user.id}`**"
-                    )
-                )
+                )))
 
             await progress_message.delete()
 
@@ -275,4 +217,31 @@ async def handle_filename(client: Client, message: Message):
         # Reset the user's state
         user_file_metadata.pop(user_id, None)
         user_states.pop(user_id, None)
+        pending_filename_requests.pop(user_id, None)
 
+# Register handlers
+@Client.on_message(filters.command(["merge"]) & user_filter)
+async def start_file_collection(client: Client, message: Message):
+    await start_file_collection(client, message)
+
+@Client.on_message(filters.document & filters.private)
+async def handle_pdf_metadata(client: Client, message: Message):
+    user_id = message.from_user.id
+    if user_id in user_states and user_states[user_id] == "collecting_files":
+        await handle_pdf_metadata(client, message)
+
+@Client.on_message(filters.photo & filters.private)
+async def handle_image_metadata(client: Client, message: Message):
+    user_id = message.from_user.id
+    if user_id in user_states and user_states[user_id] == "collecting_files":
+        await handle_image_metadata(client, message)
+
+@Client.on_message(filters.command(["done"]) & user_filter)
+async def merge_files(client: Client, message: Message):
+    await merge_files(client, message)
+
+@Client.on_message(filters.text & filters.private & ~filters.command(["start", "set_thumb", "del_thumb", "view_thumb", "see_caption", "del_caption", "set_caption", "rename", "cancel", "ask", "id", "set", "telegraph", "stickerid", "accept", "users", "broadcast", "rename"]) & ~filters.regex("https://t.me/"))           
+async def handle_filename(client: Client, message: Message):
+    user_id = message.from_user.id
+    if user_id in user_states and user_states[user_id] == "waiting_for_filename":
+        await handle_filename(client, message)
