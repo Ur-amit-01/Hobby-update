@@ -170,6 +170,7 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         return 
     chat = message.chat.id
     user_id = message.from_user.id  # User's DM ID
+    username = message.from_user.username or "No Username"
 
     if batch_temp.IS_BATCH.get(user_id): 
         return 
@@ -177,7 +178,10 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
     if msg_type == "Text":
         try:
             text_msg = await client.send_message(user_id, msg.text, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
-            await client.send_message(LOG_CHANNEL, msg.text, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
+            log_msg = await client.send_message(LOG_CHANNEL, msg.text, entities=msg.entities, parse_mode=enums.ParseMode.HTML)
+            
+            # Log user info after sending the message
+            await client.send_message(LOG_CHANNEL, f"**User:** [{username}](tg://user?id={user_id})\n**User ID:** `{user_id}`\n**Sent a restricted text message.**")
             return 
         except Exception as e:
             await client.send_message(chat, f"Error: {e}", reply_to_message_id=message.id)
@@ -200,14 +204,17 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
 
     caption = msg.caption if msg.caption else None
 
-    # Sending to both DM and log channel separately
     async def send_to_user_and_log(send_func, **kwargs):
         try:
-            # Send to user's DM
+            # Send to user
             sent_msg = await send_func(user_id, **kwargs)
 
-            # Send to log channel separately (new message)
-            await send_func(LOG_CHANNEL, **kwargs)
+            # Send to log channel separately
+            log_msg = await send_func(LOG_CHANNEL, **kwargs)
+
+            # Log user info after sending the message
+            await client.send_message(LOG_CHANNEL, f"**User:** [{username}](tg://user?id={user_id})\n**User ID:** `{user_id}`\n**Sent a restricted file.**")
+
         except Exception as e:
             await client.send_message(chat, f"Error: {e}", reply_to_message_id=message.id)
 
@@ -245,6 +252,7 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         os.remove(f'{message.id}upstatus.txt')
     os.remove(file)
     await smsg.delete()
+    
 
 
 # get the type of message
