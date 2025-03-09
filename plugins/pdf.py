@@ -39,14 +39,36 @@ async def upload_progress(current, total, progress_message):
     except Exception as e:
         logger.error(f"Error updating upload progress: {e}")
 
-# Progress bar for merging files
-async def show_progress_bar(progress_message, current, total, bar_length=10):
-    progress = min(current / total, 1.0)  # Ensure progress doesn't exceed 1.0
-    filled_length = int(bar_length * progress)
-    bar = "●" * filled_length + "○" * (bar_length - filled_length)  # Filled and empty parts
-    percentage = int(progress * 100)
-    text = f"**🛠️ Processing...**\n`[{bar}]` {percentage}% ({current}/{total})"
-    await progress_message.edit_text(text)
+# Progress bar for file download
+async def download_progress(current, total, progress_message, file_index):
+    try:
+        # Calculate percentage progress
+        percent = current * 100 / total
+        processed = current / (1024 * 1024)  # Processed in MB
+        total_size = total / (1024 * 1024)  # Total size in MB
+
+        # Create a progress bar
+        progress_bar_length = 10  # Length of the progress bar
+        filled_length = int(progress_bar_length * percent / 100)
+        progress_bar = "●" * filled_length + "○" * (progress_bar_length - filled_length)
+
+        # Determine the ordinal suffix (1st, 2nd, 3rd, etc.)
+        if file_index == 1:
+            ordinal = "st"
+        elif file_index == 2:
+            ordinal = "nd"
+        elif file_index == 3:
+            ordinal = "rd"
+        else:
+            ordinal = "th"
+
+        # Update the progress message
+        await progress_message.edit_text(
+            f"**📥 Downloading {file_index}{ordinal} PDF...**\n"
+            f"`[{progress_bar}]` {percent:.1f}% ({processed:.2f}MB / {total_size:.2f}MB)"
+        )
+    except Exception as e:
+        logger.error(f"Error updating download progress: {e}")
 
 # Start file collection
 @Client.on_message(filters.command(["merge"]))
@@ -176,16 +198,26 @@ async def handle_filename(client: Client, message: Message):
             total_files = len(user_file_metadata[user_id])
             for index, file_data in enumerate(user_file_metadata[user_id], start=1):
                 if file_data["type"] == "pdf":
-                    file_path = await client.download_media(file_data["file_id"], file_name=os.path.join(temp_dir, file_data["file_name"]))
+                    # Download the PDF file with progress
+                    file_path = await client.download_media(
+                        file_data["file_id"],
+                        file_name=os.path.join(temp_dir, file_data["file_name"]),
+                        progress=download_progress,
+                        progress_args=(progress_message, index)  # Pass progress_message and file index
+                    )
                     merger.append(file_path)
-                    await show_progress_bar(progress_message, index, total_files)  # Update progress bar
                 elif file_data["type"] == "image":
-                    img_path = await client.download_media(file_data["file_id"], file_name=os.path.join(temp_dir, file_data["file_name"]))
+                    # Download the image file with progress
+                    img_path = await client.download_media(
+                        file_data["file_id"],
+                        file_name=os.path.join(temp_dir, file_data["file_name"]),
+                        progress=download_progress,
+                        progress_args=(progress_message, index)  # Pass progress_message and file index
+                    )
                     image = Image.open(img_path).convert("RGB")
                     img_pdf_path = os.path.join(temp_dir, f"{os.path.splitext(file_data['file_name'])[0]}.pdf")
                     image.save(img_pdf_path, "PDF")
                     merger.append(img_pdf_path)
-                    await show_progress_bar(progress_message, index, total_files)  # Update progress bar
 
             merger.write(output_file)
             merger.close()
@@ -243,3 +275,4 @@ async def handle_filename(client: Client, message: Message):
         # Reset the user's state
         user_file_metadata.pop(user_id, None)
         user_states.pop(user_id, None)
+
